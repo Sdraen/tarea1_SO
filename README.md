@@ -1,6 +1,7 @@
-#Integrantes Tarea 1 Sistemas operativos IECI
-Andrés Torres Castro
-Tomás Méndez Andrades
+# Integrantes Tarea 1 Sistemas operativos IECI
+
+- **Andrés Torres Castro**
+- **Tomás Méndez Andrades**
 
 # Simulador de Carrera de Autos (Multihebras)
 
