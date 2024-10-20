@@ -1,81 +1,110 @@
-
 #include <iostream>
 #include <thread>
 #include <vector>
 #include <mutex>
 #include <chrono>
 #include <random>
-#include <iomanip>
 
-std::mutex mtx;  // Mutex para manejar la sincronización en la terminal
-bool race_over = false;
-std::vector<std::pair<int, int>> results;  // Para almacenar el lugar de llegada y el ID del auto
+// Control de acceso a la salida por consola
+std::mutex consola_mutex;
 
-void autos_coloreados(int car_id, int distance, bool finished) {
-    if (finished) {
-        std::cout << "\033[1;32mAuto" << car_id << " avanza " << distance 
-                  << " metros y termina la carrera en el lugar " << results.size() << "!" << "\033[0m" << std::endl;
+// Lista para almacenar la posición de llegada de los autos
+std::vector<std::pair<int, int>> resultados_carrera;
+
+/**
+ * @brief Muestra el progreso de un auto y si ha completado la carrera.
+ * 
+ * @param id El identificador del auto.
+ * @param avance Cuántos metros avanzó en este turno.
+ * @param total_avanzado Cuántos metros ha recorrido en total.
+ * @param finalizado Indica si el auto terminó la carrera.
+ */
+void actualizar_progreso(int id, int avance, int total_avanzado, bool finalizado) {
+    std::lock_guard<std::mutex> bloqueo(consola_mutex);  // Sincronización para evitar que los hilos interfieran
+    if (finalizado) {
+        std::cout << "\033[1;32mAuto" << id << " avanzó " << avance 
+                  << " metros y llegó en la posición " << resultados_carrera.size() << "!\033[0m" << std::endl;
     } else {
-        std::cout << "Auto" << car_id << " avanza " << distance 
-                  << " metros (total: " << results[car_id].second << " metros)" << std::endl;
+        std::cout << "Auto" << id << " avanzó " << avance 
+                  << " metros (acumulado: " << total_avanzado << " metros)" << std::endl;
     }
 }
 
-void carrera(int car_id, int total_distance) {
+/**
+ * @brief Función que simula el comportamiento de un auto en la carrera.
+ * 
+ * @param id_auto Identificador del auto.
+ * @param meta La distancia total que debe recorrer.
+ */
+void simular_auto(int id_auto, int meta) {
     std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> distance_dist(1, 10);  // Avanza entre 1 y 10 metros
-    std::uniform_int_distribution<> time_dist(100, 500);   // Espera entre 100 y 500 ms
+    std::mt19937 generador(rd());
+    std::uniform_int_distribution<> avance_dist(1, 10);  // Avanza entre 1 y 10 metros
+    std::uniform_int_distribution<> tiempo_dist(100, 500);  // Tiempo de espera entre avances (100 a 500 ms)
 
-    int current_distance = 0;
+    int acumulado = 0;
 
-    while (current_distance < total_distance) {
-        int distance = distance_dist(gen);
-        int wait_time = time_dist(gen);
+    // Mientras no haya llegado a la meta
+    while (acumulado < meta) {
+        int metros_avanzados = avance_dist(generador);
+        int tiempo_espera = tiempo_dist(generador);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(wait_time));
+        std::this_thread::sleep_for(std::chrono::milliseconds(tiempo_espera));  // Simulación de tiempo de avance
 
-        current_distance += distance;
+        acumulado += metros_avanzados;
 
-        std::lock_guard<std::mutex> lock(mtx);
-        if (current_distance >= total_distance) {
-            current_distance = total_distance;
-            if (!race_over) {
-                race_over = true;
+        // Si alcanza o supera la meta
+        if (acumulado >= meta) {
+            acumulado = meta;  // Ajuste por si pasa de la meta
+            {
+                std::lock_guard<std::mutex> bloqueo(consola_mutex);
+                resultados_carrera.push_back({(int)resultados_carrera.size() + 1, id_auto});
             }
-            results.push_back({(int)results.size() + 1, car_id});
-            autos_coloreados(car_id, distance, true);
+            actualizar_progreso(id_auto, metros_avanzados, acumulado, true);
         } else {
-            std::cout << "Auto" << car_id << " avanza " << distance 
-                      << " metros (total: " << current_distance << " metros)" << std::endl;
+            actualizar_progreso(id_auto, metros_avanzados, acumulado, false);
         }
     }
 }
 
+/**
+ * @brief Función principal para organizar y ejecutar la carrera entre varios autos.
+ * 
+ * @param argc Número de argumentos proporcionados.
+ * @param argv Argumentos pasados desde la línea de comandos.
+ * @return int Estado de finalización del programa.
+ */
 int main(int argc, char* argv[]) {
+    // Validación de argumentos
     if (argc != 3) {
-        std::cerr << "Uso: " << argv[0] << " <distancia total> <numero de autos>" << std::endl;
+        std::cerr << "Uso: " << argv[0] << " <distancia total> <cantidad de autos>" << std::endl;
         return 1;
     }
 
-    int total_distance = std::stoi(argv[1]);
-    int num_cars = std::stoi(argv[2]);
+    // Configuración de la carrera
+    int distancia_total = std::stoi(argv[1]);
+    int cantidad_autos = std::stoi(argv[2]);
 
-    std::vector<std::thread> cars;
-    for (int i = 0; i < num_cars; ++i) {
-        cars.push_back(std::thread(carrera, i, total_distance));
+    std::cout << "Carrera de " << distancia_total << " metros" << std::endl;
+    std::cout << "-------------------------------" << std::endl;
+
+    // Creación de hilos para cada auto
+    std::vector<std::thread> hilos;
+    for (int i = 0; i < cantidad_autos; ++i) {
+        hilos.push_back(std::thread(simular_auto, i, distancia_total));
     }
 
-    for (auto& car : cars) {
-        car.join();
+    // Espera a que todos los autos terminen
+    for (auto& hilo : hilos) {
+        hilo.join();
     }
 
-    std::cout << "\nResultados finales:\n";
-    std::cout << "Lugar\tAuto\n";
-    for (const auto& result : results) {
-        std::cout << result.first << "\tAuto" << result.second << std::endl;
+    // Imprimir tabla final de posiciones
+    std::cout << "\nPosición\tAuto" << std::endl;
+    std::cout << "-------------------------------" << std::endl;
+    for (const auto& resultado : resultados_carrera) {
+        std::cout << resultado.first << "\t\tAuto" << resultado.second << std::endl;
     }
 
-    std::cout << "Carrera finalizada!" << std::endl;
     return 0;
 }
